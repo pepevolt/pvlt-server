@@ -1,75 +1,95 @@
-import express from "express";
-import cors from "cors";
-import dotenv from "dotenv";
-import { ethers } from "ethers";
-
-dotenv.config();
+const express = require("express");
+const cors = require("cors");
+const { ethers } = require("ethers");
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-/* ================= PROVIDER ================= */
-const provider = new ethers.JsonRpcProvider(process.env.RPC_URL);
+// POLYGON RPC ([Polygon Labs](chatgpt://generic-entity?number=0))
+const provider = new ethers.JsonRpcProvider("https://polygon-rpc.com");
 
-/* ================= SIGNER ================= */
+// ADMIN WALLET (backend signer)
 const wallet = new ethers.Wallet(
-  process.env.PRIVATE_KEY,
-  provider
+    process.env.PRIVATE_KEY,
+    provider
 );
 
-/* ================= GAME CONTRACT ABI ================= */
-const ABI = [
-  "function claim(uint256 amount,uint256 nonce,bytes signature) external"
+// ====== YOUR DEPLOYED CONTRACTS ======
+const GAME_TOKEN_ADDRESS = "0xcaf3f8172d8accaa87d3eb9f679b693d04976aee";
+
+// ONLY NEED GAME TOKEN ABI FOR MINT
+const abi = [
+    "function mint(address to, uint256 amount) external"
 ];
 
-/* ================= CLAIM ENDPOINT ================= */
-app.post("/claim", async (req, res) => {
-  try {
-    const { address, points } = req.body;
+const gameToken = new ethers.Contract(
+    GAME_TOKEN_ADDRESS,
+    abi,
+    wallet
+);
 
-    if (!address || !points) {
-      return res.status(400).json({ error: "Missing data" });
+// simple DB
+const users = {};
+
+function getUser(wallet) {
+    if (!users[wallet]) {
+        users[wallet] = { score: 0, lastTap: 0 };
+    }
+    return users[wallet];
+}
+
+// TAP SYSTEM
+app.post("/tap", async (req, res) => {
+    const { walletAddr } = req.body;
+
+    if (!walletAddr) return res.json({ error: "No wallet" });
+
+    const user = getUser(walletAddr);
+
+    const now = Date.now();
+    if (now - user.lastTap < 300) {
+        return res.json({ error: "Too fast" });
     }
 
-    // Convert points → token amount
-    let amount = Math.floor(points / 10000);
-
-    if (amount < 100) {
-      return res.status(400).json({ error: "Minimum not met" });
-    }
-
-    if (amount > 500) amount = 500;
-
-    // SIMPLE NONCE
-    const nonce = Date.now();
-
-    // MESSAGE TO SIGN
-    const messageHash = ethers.solidityPackedKeccak256(
-      ["address", "uint256", "uint256"],
-      [address, amount, nonce]
-    );
-
-    // SIGN MESSAGE
-    const signature = await wallet.signMessage(
-      ethers.getBytes(messageHash)
-    );
+    user.lastTap = now;
+    user.score += 1;
 
     res.json({
-      amount,
-      nonce,
-      signature
+        wallet: walletAddr,
+        score: user.score
     });
-
-  } catch (err) {
-    console.log(err);
-    res.status(500).json({ error: "Server error" });
-  }
 });
 
-/* ================= START SERVER ================= */
-const PORT = process.env.PORT || 3000;
+// CLAIM REWARDS (THIS CALLS YOUR CONTRACT)
+app.post("/claim", async (req, res) => {
+    const { walletAddr } = req.body;
 
-app.listen(PORT, () => {
-  console.log("PVLT SERVER RUNNING ON PORT", PORT);
+    const user = getUser(walletAddr);
+
+    const reward = Math.floor(user.score / 100);
+
+    if (reward <= 0) {
+        return res.json({ error: "No reward" });
+    }
+
+    try {
+        const tx = await gameToken.mint(walletAddr, reward * 10 ** 18);
+        await tx.wait();
+
+        user.score = 0; // reset after claim
+
+        res.json({
+            success: true,
+            minted: reward,
+            tx: tx.hash
+        });
+
+    } catch (e) {
+        res.json({ error: e.message });
+    }
+});
+
+app.listen(3000, () => {
+    console.log("PEPEVOLT system running");
 });
