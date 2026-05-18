@@ -1,53 +1,36 @@
-const express = require("express");
-const cors = require("cors");
+import { ethers } from "ethers";
+import dotenv from "dotenv";
+dotenv.config();
 
-const app = express();
-app.use(cors());
-app.use(express.json());
+const provider = new ethers.providers.JsonRpcProvider(
+process.env.RPC_URL
+);
 
-// memory storage
-const users = {};
+const wallet = new ethers.Wallet(
+process.env.PRIVATE_KEY,
+provider
+);
 
-function getUser(wallet) {
-  if (!users[wallet]) {
-    users[wallet] = { score: 0, lastTap: 0 };
-  }
-  return users[wallet];
+const abi = [
+"function mint(address to, uint256 amount) external"
+];
+
+const contract = new ethers.Contract(
+process.env.GAME_CONTRACT,
+abi,
+wallet
+);
+
+export async function mintTokens(to, amount) {
+try {
+
+const tx = await contract.mint(to, amount);
+await tx.wait();
+
+return tx.hash;
+
+} catch (err) {
+console.log("Mint error:", err);
+throw new Error("Mint failed");
 }
-
-// test route
-app.get("/", (req, res) => {
-  res.send("PEPEVOLT API RUNNING 🚀");
-});
-
-// TAP
-app.post("/tap", (req, res) => {
-  const { wallet } = req.body;
-
-  if (!wallet) return res.json({ error: "No wallet" });
-
-  const user = getUser(wallet);
-
-  const now = Date.now();
-  if (now - user.lastTap < 300) {
-    return res.json({ error: "Too fast" });
-  }
-
-  user.lastTap = now;
-  user.score += 1;
-
-  res.json({
-    wallet,
-    score: user.score
-  });
-});
-
-// LEADERBOARD (IMPORTANT)
-app.get("/leaderboard", (req, res) => {
-  res.json(users);
-});
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log("PEPEVOLT server running on port " + PORT);
-});
+}
