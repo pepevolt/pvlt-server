@@ -12,3 +12,9 @@
 "node-telegram-bot-api":"^0.66.0"
 }
 }
+
+{
+  "amount": 250000000000000000000,
+  "nonce": 123456,
+  "signature": "0xabc..."
+}
