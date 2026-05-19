@@ -117,13 +117,14 @@ Math.floor(
 30000
 );
 
+/*
+NO ENERGY CAP
+PURCHASED ENERGY STAYS
+*/
+
 if(diff > 0){
 
-user.energy =
-Math.min(
-50,
-user.energy + diff
-);
+user.energy += diff;
 
 user.lastRefill = now;
 }
@@ -150,13 +151,14 @@ energy:user.energy,
 pvltg:user.pvltg
 
 });
+
 });
 
 /* ================= BUY ENERGY ================= */
 
 app.post("/refill",(req,res)=>{
 
-const { wallet } = req.body;
+const { wallet, txHash } = req.body;
 
 const user = users[wallet];
 
@@ -167,20 +169,40 @@ error:"User not found"
 });
 }
 
-/* ================= ADD ENERGY ================= */
+/* ================= TX REQUIRED ================= */
 
-user.energy += 50;
+if(!txHash){
 
-if(user.energy > 500){
-
-user.energy = 500;
+return res.json({
+error:"Transaction hash missing"
+});
 }
 
+/* ================= BUY PACK ================= */
+
+/*
+BUY ENERGY PACK
+100000 ENERGY
+*/
+
+user.energy += 100000;
+
+console.log(
+"ENERGY PURCHASE:",
+wallet,
+txHash
+);
+
+/* ================= RESPONSE ================= */
+
 res.json({
+
+success:true,
 
 energy:user.energy
 
 });
+
 });
 
 /* ================= SWAP POINTS ================= */
@@ -225,6 +247,7 @@ success:true,
 pvltg:user.pvltg
 
 });
+
 });
 
 /* ================= CLAIM PVLTG ================= */
@@ -288,6 +311,7 @@ res.json({
 error:"Claim failed"
 });
 }
+
 });
 
 /* ================= START ================= */
