@@ -33,7 +33,6 @@ const pvltgAbi = [
 "function mint(address to,uint256 amount) external"
 ];
 
-/* FIX: Adding swap function structure to contract definition */
 const gameAbi = [
 "function swapPVLTGtoPVLT(uint256 amount) external"
 ];
@@ -261,7 +260,6 @@ ethers.utils.parseEther(
 user.pvltg.toString()
 );
 
-/* 1. Mint the PVLTG to the user's wallet */
 const mintTx =
 await pvltg.mint(
 userWallet,
@@ -270,7 +268,6 @@ amount
 
 await mintTx.wait();
 
-/* 2. FIX: Trigger Engine smart contract to swap user's approved PVLTG back into PVLT */
 const swapTx =
 await gameEngine.swapPVLTGtoPVLT(
 amount
