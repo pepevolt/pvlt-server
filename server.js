@@ -182,10 +182,10 @@ error:"Transaction hash missing"
 
 /*
 BUY ENERGY PACK
-100000 ENERGY
+10000 ENERGY
 */
 
-user.energy += 100000;
+user.energy += 10000;
 
 console.log(
 "ENERGY PURCHASE:",
