@@ -6,248 +6,156 @@ import { ethers } from "ethers";
 dotenv.config();
 
 const app = express();
-
 app.use(cors());
 app.use(express.json());
 
-/* ================= STORAGE ================= */
-
-const users = {};
-
-/* ================= POLYGON SETUP ================= */
+const users = {}; 
 
 let provider;
-let wallet;
-let pvltContract;
+let serverWallet;
+let treasuryContract;
 
 try {
-    const rpcUrl = process.env.RPC_URL || "https://polygon-rpc.com";
-    const privateKey = process.env.PRIVATE_KEY;
-    
-    // Explicit token address definition for PEPEVOLT (PVLT)
-    const pvltAddress = "0xC096dB70Fa05255b210Be58Ec2508Bed61e8dfD6";
-
-    provider = new ethers.providers.JsonRpcProvider(rpcUrl, {
+    provider = new ethers.providers.JsonRpcProvider(process.env.RPC_URL, {
         chainId: 137,
         name: "polygon"
     });
 
-    if (privateKey) {
-        wallet = new ethers.Wallet(privateKey, provider);
-
-        // Standard ERC-20 interface snippet allowing the server to push tokens
-        const pvltAbi = [
-            "function transfer(address to, uint256 amount) external returns (bool)",
-            "function balanceOf(address account) external view returns (uint256)"
+    if (process.env.PRIVATE_KEY) {
+        serverWallet = new ethers.Wallet(process.env.PRIVATE_KEY, provider);
+        const treasuryAbi = [
+            "function processPlayerClaim(address _playerWallet, uint256 _pvltgAmount) external",
+            "function purchaseEnergyPack(address _playerWallet) external"
         ];
-
-        pvltContract = new ethers.Contract(pvltAddress, pvltAbi, wallet);
-    } else {
-        console.warn("WARNING: PRIVATE_KEY environment variable is not set.");
+        if (process.env.TREASURY_ADDRESS) {
+            treasuryContract = new ethers.Contract(process.env.TREASURY_ADDRESS, treasuryAbi, serverWallet);
+        }
     }
 } catch (error) {
-    console.error("Initialization Error during app startup:", error.message);
+    console.error("Boot configuration mismatch runtime log:", error.message);
 }
 
-/* ================= HEALTH ================= */
-
-app.get("/", (req, res) => {
-    res.send("PVLT SERVER RUNNING");
-});
-
-/* ================= CREATE USER ================= */
+// Energy loop calculations helper
+function updateEnergyRefill(user) {
+    const now = Date.now();
+    if (user.energy === 0) {
+        const elapsedSeconds = Math.floor((now - user.lastEnergyDepleted) / 1000);
+        if (elapsedSeconds > 0) {
+            // Cap the automatic restoration exactly to a max window of 20 seconds (20 energy points total)
+            const addedEnergy = Math.min(elapsedSeconds, 20);
+            user.energy = addedEnergy;
+        }
+    }
+    return user;
+}
 
 app.post("/user", (req, res) => {
-    const { wallet: userWallet } = req.body;
-
-    if (!userWallet) {
-        return res.json({
-            error: "Wallet required"
-        });
+    const { wallet } = req.body;
+    if (!wallet) return res.json({ error: "Wallet required" });
+    const key = wallet.toLowerCase();
+    
+    if (!users[key]) {
+        users[key] = { points: 265, energy: 9787, pvltg: 0.0, lastEnergyDepleted: Date.now() };
     }
-
-    const addressKey = userWallet.toLowerCase();
-
-    if (!users[addressKey]) {
-        users[addressKey] = {
-            points: 0,
-            energy: 50,
-            pvltg: 0,
-            lastRefill: Date.now()
-        };
-    }
-
-    res.json(users[addressKey]);
+    users[key] = updateEnergyRefill(users[key]);
+    res.json(users[key]);
 });
 
-/* ================= TAP ================= */
-
 app.post("/tap", (req, res) => {
-    const { wallet: userWallet } = req.body;
-    if (!userWallet) return res.json({ error: "Wallet required" });
+    const { wallet } = req.body;
+    const key = wallet.toLowerCase();
+    let user = users[key];
+    if (!user) return res.json({ error: "User session uninitialized" });
 
-    const addressKey = userWallet.toLowerCase();
-    const user = users[addressKey];
-
-    if (!user) {
-        return res.json({
-            error: "User not found"
-        });
-    }
-
-    /* ================= AUTO REFILL ================= */
-
-    const now = Date.now();
-    const diff = Math.floor((now - user.lastRefill) / 30000);
-
-    if (diff > 0) {
-        user.energy += diff;
-        user.lastRefill = now;
-    }
-
-    /* ================= TAP EXECUTION ================= */
+    user = updateEnergyRefill(user);
 
     if (user.energy <= 0) {
-        return res.json({
-            error: "No energy"
-        });
+        if (!user.lastEnergyDepleted || user.lastEnergyDepleted === 0) {
+            user.lastEnergyDepleted = Date.now();
+        }
+        return res.json({ error: "Energy depleted. Wait for auto-refill or buy instant energy!", energy: 0, points: user.points });
     }
 
     user.energy -= 1;
-    user.points += 1;
+    user.points += 2; // Rule modifier optimization: 1 Tap = 2 Points
 
-    res.json({
-        points: user.points,
-        energy: user.energy,
-        pvltg: user.pvltg
-    });
+    if (user.energy === 0) {
+        user.lastEnergyDepleted = Date.now();
+    }
+
+    res.json({ points: user.points, energy: user.energy, pvltg: user.pvltg });
 });
 
-/* ================= BUY ENERGY ================= */
-
-app.post("/refill", (req, res) => {
-    const { wallet: userWallet, txHash } = req.body;
-    if (!userWallet) return res.json({ error: "Wallet required" });
-
-    const addressKey = userWallet.toLowerCase();
-    const user = users[addressKey];
-
-    if (!user) {
-        return res.json({
-            error: "User not found"
-        });
-    }
-
-    if (!txHash) {
-        return res.json({
-            error: "Transaction hash missing"
-        });
-    }
-
-    user.energy += 10000;
-    console.log("ENERGY PURCHASE:", addressKey, txHash);
-
-    res.json({
-        success: true,
-        energy: user.energy
-    });
-});
-
-/* ================= SWAP POINTS ================= */
-
-app.post("/swap-points", (req, res) => {
-    const { wallet: userWallet } = req.body;
-    if (!userWallet) return res.json({ error: "Wallet required" });
-
-    const addressKey = userWallet.toLowerCase();
-    const user = users[addressKey];
-
-    if (!user) {
-        return res.json({
-            error: "User not found"
-        });
-    }
-
-    if (user.points < 10) {
-        return res.json({
-            error: "Need 10 points"
-        });
-    }
-
-    const earned = Math.floor(user.points / 10);
-    user.points = 0;
-    user.pvltg += earned;
-
-    res.json({
-        success: true,
-        pvltg: user.pvltg
-    });
-});
-
-/* ================= CLAIM PVLTG ================= */
-
-app.post("/claim-pvltg", async (req, res) => {
+app.post("/buy-energy", async (req, res) => {
     try {
-        const { wallet: userWallet } = req.body;
-        if (!userWallet) return res.json({ error: "Wallet required" });
+        const { wallet } = req.body;
+        const key = wallet.toLowerCase();
+        const user = users[key];
+        if (!user) return res.json({ error: "User not found" });
 
-        const addressKey = userWallet.toLowerCase();
-        const user = users[addressKey];
+        if (!treasuryContract) return res.json({ error: "Treasury not loaded on server" });
 
-        if (!user) {
-            return res.json({
-                error: "User not found"
-            });
-        }
-
-        /* ================= MINIMUM REQUIREMENT ================= */
-
-        if (user.pvltg < 10) {
-            return res.json({
-                error: "Need minimum 10 PVLTG"
-            });
-        }
-
-        if (!pvltContract) {
-            return res.json({
-                error: "Server token configuration is missing or private key unconfigured."
-            });
-        }
-
-        // Calculation: 10 PVLTG inside database = 1 real PVLT token on-chain
-        const pvltAmountToPayout = user.pvltg / 10;
-        const amountInWei = ethers.utils.parseEther(pvltAmountToPayout.toString());
-
-        console.log(`Processing payout for ${addressKey}. Sending ${pvltAmountToPayout} PVLT tokens directly.`);
-
-        /* ================= DIRECT TRANSFER TO USER WALLET ================= */
+        console.log(`Processing on-chain purchase of energy for ${key}...`);
         
-        // Server sends PVLT directly from its balance to the player's personal wallet address
-        const tx = await pvltContract.transfer(addressKey, amountInWei);
-        
-        // Wait for block verification on Polygon
+        // Triggers the on-chain transfer of 1000 PVLT from user to treasury
+        const tx = await treasuryContract.purchaseEnergyPack(key);
         await tx.wait();
 
-        /* ================= RESET BALANCE ================= */
-
-        user.pvltg = 0;
-
-        res.json({
-            success: true,
-            tx: tx.hash
-        });
-
+        user.energy += 10000; // Adds 10,000 energy points upon block verification confirmation
+        user.lastEnergyDepleted = 0; 
+        
+        res.json({ success: true, energy: user.energy });
     } catch (err) {
-        console.error("CRITICAL ERROR DURING TOKEN PAYOUT TRANSACTION:", err);
-        res.json({
-            error: "Claim failed on-chain: " + (err.reason || err.message || "Unknown token error")
-        });
+        console.error("ENERGY PURCHASE TRANSACTION REVERTED:", err);
+        res.json({ error: "Transaction declined on Polygonscan. Balance modification rejected." });
     }
 });
 
-/* ================= START ================= */
+app.post("/swap-points", (req, res) => {
+    const { wallet } = req.body;
+    const key = wallet.toLowerCase();
+    const user = users[key];
+    if (!user) return res.json({ error: "Profile missing" });
+
+    // Rule baseline: 2000 points = 4 Game Currency Tokens ($PVLTG)
+    if (user.points < 2000) return res.json({ error: "Minimum 2,000 points required to swap" });
+
+    const multiplier = Math.floor(user.points / 2000);
+    user.points = user.points % 2000;
+    user.pvltg += (multiplier * 4);
+
+    res.json({ success: true, pvltg: user.pvltg, remainingPoints: user.points });
+});
+
+app.post("/withdraw-pvltg", async (req, res) => {
+    try {
+        const { wallet } = req.body;
+        const key = wallet.toLowerCase();
+        const user = users[key];
+
+        if (!user) return res.json({ error: "User profile context uninitialized" });
+        
+        // Calculation check: Determine expected output payout value
+        const expectedPayout = user.pvltg / 500;
+        if (expectedPayout < 10) return res.json({ error: "Withdrawal quantity below minimum required threshold of 10 PVLT" });
+        if (expectedPayout > 1000) return res.json({ error: "Withdrawal quantity exceeds maximum allowed threshold of 1000 PVLT" });
+
+        const rawBalance = user.pvltg;
+        const amountInWei = ethers.utils.parseEther(rawBalance.toString());
+
+        // Process on-chain conversion via Contract 3
+        const tx = await treasuryContract.processPlayerClaim(key, amountInWei);
+        await tx.wait();
+
+        // Clear player currency allocations instantly upon block validation logs confirmation
+        user.pvltg = 0;
+        res.json({ success: true, tx: tx.hash });
+
+    } catch (err) {
+        console.error("WITHDRAW ROUTE FAILURE:", err);
+        res.json({ error: "Withdrawal aborted: " + (err.reason || err.message) });
+    }
+});
 
 const PORT = process.env.PORT || 10000;
-app.listen(PORT, () => {
-    console.log(`PVLT SERVER RUNNING ON PORT ${PORT}`);
-});
+app.listen(PORT, () => { console.log(`Production middleware online on port ${PORT}`); });
