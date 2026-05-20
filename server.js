@@ -5,30 +5,30 @@ const dotenv = require("dotenv");
 dotenv.config();
 
 const app = express();
+
+// REQUIRED for Render
 const PORT = process.env.PORT || 3000;
 
 app.use(express.static(path.join(__dirname, "public")));
 
-// send config to frontend securely
 app.get("/config", (req, res) => {
   res.json({
     token: process.env.TOKEN_CONTRACT,
     treasury: process.env.TREASURY_CONTRACT,
-    engine: process.env.ENGINE_CONTRACT,
-    reown: process.env.REOWN_PROJECT_ID
+    engine: process.env.ENGINE_CONTRACT
   });
 });
 
-// FIX: root route
+// root route
 app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
 });
 
-// FIX: fallback route (Render requirement)
+// fallback
 app.get("*", (req, res) => {
   res.sendFile(path.join(__dirname, "public", "index.html"));
 });
 
-app.listen(PORT, () => {
-  console.log("PEPEVOLT running on port", PORT);
+app.listen(PORT, "0.0.0.0", () => {
+  console.log("Server running on port", PORT);
 });
