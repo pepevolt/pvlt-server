@@ -1,6 +1,6 @@
 
 {
-  "name": "pvlt-game-backend",
+  "name": "pvlt-game-suite",
   "version": "1.0.0",
   "main": "server.js",
   "dependencies": {
