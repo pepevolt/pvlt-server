@@ -1,6 +1,0 @@
-services:
-  - type: web
-    name: pvlt-server
-    env: node
-    buildCommand: npm install
-    startCommand: npm start
